@@ -121,7 +121,16 @@ const zipStored = (files: { name: string; contents: string }[]) => {
   endView.setUint32(16, offset, true);
   endView.setUint16(20, 0, true);
 
-  return new Blob([...localParts.flat(), centralDirectory, end], {
+  const archiveParts = [...localParts.flat(), centralDirectory, end];
+  const archiveBuffer = new ArrayBuffer(archiveParts.reduce((sum, part) => sum + part.length, 0));
+  const archiveBytes = new Uint8Array(archiveBuffer);
+  let archiveOffset = 0;
+  archiveParts.forEach((part) => {
+    archiveBytes.set(part, archiveOffset);
+    archiveOffset += part.length;
+  });
+
+  return new Blob([archiveBuffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
 };
