@@ -4,17 +4,17 @@
 
 El proyecto incluye el login real, contraseñas BCrypt, tokens JWT, protección de las rutas de inventario, migración del esquema con Flyway y el manifiesto `render.yaml`. La base se crea desde una instancia vacía; el administrador inicial se crea solo si no hay usuarios y su contraseña llega mediante una variable secreta.
 
-Esta carpeta no tiene `.git` ni está conectada a un repositorio remoto. Render necesita que el repositorio se suba y se conecte para aplicar el Blueprint. La publicación real y la transferencia de los datos locales todavía requieren el repositorio y acceso a la base local/exportación.
+El proyecto ya tiene un repositorio Git local. Para aplicar el Blueprint, primero súbelo a GitHub y conecta ese repositorio con Render.
 
 ## Servicios en Render
 
-`render.yaml` declara tres recursos en Ohio:
+`render.yaml` declara tres recursos en Ohio, todos en el plan gratuito:
 
-- **PostgreSQL 17 privado**. La lista de IP vacía bloquea conexiones públicas y permite la red privada de Render.
-- **Backend Docker**, con comprobación `/api/health/ready`, esquema Flyway y llave de firma JWT generada por Render.
+- **PostgreSQL 17 privado**. La instancia gratuita tiene 1 GB y vence a los 30 días; Render elimina los datos después del periodo de gracia si no se actualiza. El plan gratuito no ofrece respaldos.
+- **Backend Docker gratuito**, con comprobación `/api/health/ready`, esquema Flyway y llave de firma JWT generada por Render. Render lo suspende tras 15 minutos sin tráfico y puede tardar en responder al primer acceso.
 - **Frontend estático**, con rutas SPA y URL de API definida durante la compilación.
 
-Con los planes mínimos pagados actuales, el backend cuesta US$7/mes y PostgreSQL US$6/mes; el frontend estático no tiene costo. Presupuesta desde US$13/mes y confirma el total en [Render Pricing](https://render.com/pricing) antes de crear servicios: el almacenamiento o uso adicional puede cambiar el importe. La base gratuita expira después de 30 días, así que el Blueprint usa el plan pagado para conservar los datos ([límites del plan gratuito](https://render.com/docs/free)).
+El costo previsto es US$0. Render indica que las bases gratuitas vencen a los 30 días, tienen 1 GB y no incluyen respaldos; los servicios web gratuitos se suspenden tras 15 minutos sin tráfico. Son límites adecuados para una demostración, no para guardar inventario a largo plazo. Revisa los [límites oficiales del plan gratuito](https://render.com/docs/free) y los [planes y precios](https://render.com/pricing).
 
 ## Variables del backend
 
@@ -34,17 +34,18 @@ Con los planes mínimos pagados actuales, el backend cuesta US$7/mes y PostgreSQ
 
 No incluyas secretos en archivos versionados, Docker build args, imágenes ni logs. Hibernate mantiene `ddl-auto=validate`. Flyway crea el esquema v3 en una base vacía; si ya existe un esquema sin historial Flyway, lo marca como línea base v1 y conserva los datos.
 
-## Migrar la base local
+## Importar datos de una base local (opcional)
 
-1. Confirma que la base local está en esquema versión 3 según [database/README.md](database/README.md).
-2. Haz un respaldo en formato PostgreSQL custom. El comando pedirá la contraseña:
+1. Este paso solo hace falta si existe una base local con datos que quieras conservar. Si no tienes una base o respaldo `.dump`, omite toda esta sección: Flyway crea las tablas vacías al desplegar.
+2. Confirma que la base local está en esquema versión 3 según [database/README.md](database/README.md).
+3. Haz un respaldo en formato PostgreSQL custom. El comando pedirá la contraseña:
 
    ```powershell
    pg_dump -Fc -h localhost -p 5432 -U postgres -d electromarket -f electromarket-backup.dump
    ```
 
-3. Primero crea solo PostgreSQL usando `render-database.yaml`. Antes de ejecutar el respaldo, añade temporalmente tu IP pública a la lista de acceso de la base en Render y usa su URL externa con SSL.
-4. Restaura el respaldo en esa base vacía. En PowerShell activa SSL para la conexión externa, ejecuta la restauración y luego quita tu IP de la lista:
+4. Primero crea solo PostgreSQL usando `render-database.yaml`. Antes de ejecutar el respaldo, añade temporalmente tu IP pública a la lista de acceso de la base en Render y usa su URL externa con SSL.
+5. Restaura el respaldo en esa base vacía. En PowerShell activa SSL para la conexión externa, ejecuta la restauración y luego quita tu IP de la lista:
 
    ```powershell
    $env:PGSSLMODE = 'require'
@@ -54,15 +55,15 @@ No incluyas secretos en archivos versionados, Docker build args, imágenes ni lo
 
    `pg_restore` solicitará la contraseña. La API en Ohio usará la conexión privada.
 
-5. Conecta el mismo repositorio con `render.yaml`. Render asociará la base existente y agregará backend y frontend. Flyway marcará el esquema importado como línea base v1 sin recrear las tablas.
-6. Comprueba `/api/health/ready`, el login y las operaciones. Mantén el respaldo local hasta confirmar que la aplicación desplegada muestra los mismos datos.
+6. Conecta el mismo repositorio con `render.yaml`. Render asociará la base existente y agregará backend y frontend. Flyway marcará el esquema importado como línea base v1 sin recrear las tablas.
+7. Comprueba `/api/health/ready`, el login y las operaciones. Mantén el respaldo local hasta confirmar que la aplicación desplegada muestra los mismos datos.
 
 No restaures sobre una base con datos sin crear y verificar primero otro respaldo. `script_electromarket.sql` es solo para una base nueva y vacía.
 
 ## Publicación
 
-1. Si no vas a importar datos, sube esta carpeta a un repositorio Git, conecta Render y crea un Blueprint desde `render.yaml`.
-2. Si sí vas a importar datos, sigue primero el procedimiento anterior con `render-database.yaml`; después conecta el mismo repo mediante `render.yaml`.
+1. Como no hay respaldo `.dump`, sube el proyecto a GitHub, conecta Render y crea un Blueprint desde `render.yaml`. La base vacía y sus tablas se crearán automáticamente.
+2. Si más adelante recuperas una base con datos, sigue el procedimiento opcional anterior. Antes de guardar datos reales por más de 30 días, actualiza PostgreSQL a un plan con respaldos.
 3. Establece `APP_ADMIN_PASSWORD` como secreto cuando Render lo solicite. Render genera `JWT_SECRET`, crea el esquema en una base vacía, despliega la API y compila la web.
 4. Comprueba el login, operaciones, reportes y respaldos antes de usar datos reales.
 
