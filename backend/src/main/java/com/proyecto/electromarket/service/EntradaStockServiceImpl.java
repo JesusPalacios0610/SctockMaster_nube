@@ -1,0 +1,186 @@
+package com.proyecto.electromarket.service;
+
+import com.proyecto.electromarket.dto.DetalleEntradaRequest;
+import com.proyecto.electromarket.dto.DetalleEntradaResponse;
+import com.proyecto.electromarket.dto.EntradaStockRequest;
+import com.proyecto.electromarket.dto.EntradaStockResponse;
+import com.proyecto.electromarket.entity.DetalleEntrada;
+import com.proyecto.electromarket.entity.EntradaStock;
+import com.proyecto.electromarket.entity.Producto;
+import com.proyecto.electromarket.entity.Proveedor;
+import com.proyecto.electromarket.entity.Usuario;
+import com.proyecto.electromarket.exception.RecursoNoEncontradoException;
+import com.proyecto.electromarket.repository.DetalleEntradaRepository;
+import com.proyecto.electromarket.repository.EntradaStockRepository;
+import com.proyecto.electromarket.repository.ProductoRepository;
+import com.proyecto.electromarket.repository.ProveedorRepository;
+import com.proyecto.electromarket.repository.UsuarioRepository;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+@Service
+public class EntradaStockServiceImpl implements EntradaStockService {
+
+    // Tipos de documento permitidos según las reglas de negocio
+    private static final Set<String> TIPOS_DOC_PERMITIDOS = Set.of("FACTURA", "GUIA_REMISION", "BOLETA");
+
+    private final EntradaStockRepository entradaStockRepository;
+    private final DetalleEntradaRepository detalleEntradaRepository;
+    private final ProductoRepository productoRepository;
+    private final ProveedorRepository proveedorRepository;
+    private final UsuarioRepository usuarioRepository;
+
+    public EntradaStockServiceImpl(EntradaStockRepository entradaStockRepository,
+                                  DetalleEntradaRepository detalleEntradaRepository,
+                                  ProductoRepository productoRepository,
+                                  ProveedorRepository proveedorRepository,
+                                  UsuarioRepository usuarioRepository) {
+        this.entradaStockRepository = entradaStockRepository;
+        this.detalleEntradaRepository = detalleEntradaRepository;
+        this.productoRepository = productoRepository;
+        this.proveedorRepository = proveedorRepository;
+        this.usuarioRepository = usuarioRepository;
+    }
+
+    @Override
+    @Transactional
+    public EntradaStockResponse registrarEntrada(EntradaStockRequest request) {
+        // 1. Validar que la lista de detalles no esté vacía
+        if (request.getDetalles() == null || request.getDetalles().isEmpty()) {
+            throw new IllegalArgumentException("La entrada debe contener al menos una línea de producto");
+        }
+
+        // 2. Validar tipoDocumento (FACTURA, GUIA_REMISION, BOLETA en mayúsculas)
+        String tipoDoc = request.getTipoDocumento() != null ? request.getTipoDocumento().trim().toUpperCase() : "";
+        if (!TIPOS_DOC_PERMITIDOS.contains(tipoDoc)) {
+            throw new IllegalArgumentException("Tipo de documento inválido: '" + request.getTipoDocumento() + "'. Valores permitidos: FACTURA, GUIA_REMISION, BOLETA");
+        }
+
+        // 3. Validar que exista el Proveedor y esté ACTIVO
+        Proveedor proveedor = proveedorRepository.findById(request.getIdProveedor())
+                .orElseThrow(() -> new RecursoNoEncontradoException("No se encontró el proveedor con ID: " + request.getIdProveedor()));
+
+        if (Boolean.FALSE.equals(proveedor.getActivo())) {
+            throw new IllegalArgumentException("No se puede registrar una entrada con un proveedor inactivo (ID: " + proveedor.getIdProveedor() + ")");
+        }
+
+        // 4. Validar que exista el Usuario
+        Usuario usuario = usuarioRepository.findById(request.getIdUsuario())
+                .orElseThrow(() -> new RecursoNoEncontradoException("No se encontró el usuario con ID: " + request.getIdUsuario()));
+
+        // 5. Crear y guardar la cabecera (EntradaStock)
+        EntradaStock entrada = new EntradaStock();
+        entrada.setProveedor(proveedor);
+        entrada.setUsuario(usuario);
+        entrada.setTipoDocumento(tipoDoc);
+        entrada.setDocumento(request.getDocumento().trim());
+        entrada.setFecha(request.getFecha() != null ? request.getFecha() : LocalDate.now());
+        entrada.setEstado("REGISTRADA");
+        entrada.setUsuarioActualizacion(request.getIdUsuario());
+
+        EntradaStock entradaGuardada = entradaStockRepository.save(entrada);
+
+        // 6. Procesar cada detalle, validar producto activo y sumar el stock
+        List<DetalleEntradaResponse> detallesResponse = new ArrayList<>();
+
+        for (DetalleEntradaRequest detalleReq : request.getDetalles()) {
+            if (detalleReq.getCantidad() == null || detalleReq.getCantidad() <= 0) {
+                throw new IllegalArgumentException("La cantidad debe ser mayor que 0 para todos los productos");
+            }
+
+            // Validar existencia del producto
+            Producto producto = productoRepository.findById(detalleReq.getIdProducto())
+                    .orElseThrow(() -> new RecursoNoEncontradoException("No se encontró el producto con ID: " + detalleReq.getIdProducto()));
+
+            // Validar que el producto esté ACTIVO
+            if (Boolean.FALSE.equals(producto.getActivo())) {
+                throw new IllegalArgumentException("No se puede registrar una entrada para un producto inactivo: " + producto.getNombre() + " (SKU: " + producto.getCodigoSku() + ")");
+            }
+
+            // Crear y guardar el detalle
+            DetalleEntrada detalle = new DetalleEntrada();
+            detalle.setEntrada(entradaGuardada);
+            detalle.setProducto(producto);
+            detalle.setCantidad(detalleReq.getCantidad());
+            DetalleEntrada detalleGuardado = detalleEntradaRepository.save(detalle);
+
+            // Actualizar el stock actual del producto (suma transaccional)
+            int stockAnterior = producto.getStockActual() != null ? producto.getStockActual() : 0;
+            producto.setStockActual(stockAnterior + detalleReq.getCantidad());
+            producto.setUsuarioActualizacion(request.getIdUsuario());
+            productoRepository.save(producto);
+
+            detallesResponse.add(new DetalleEntradaResponse(
+                    detalleGuardado.getIdDetalle(),
+                    producto.getIdProducto(),
+                    producto.getCodigoSku(),
+                    producto.getNombre(),
+                    detalleGuardado.getCantidad()
+            ));
+        }
+
+        return construirEntradaResponse(entradaGuardada, detallesResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<EntradaStockResponse> listarTodas() {
+        return entradaStockRepository.findAllByOrderByFechaDesc()
+                .stream()
+                .map(entrada -> {
+                    List<DetalleEntradaResponse> detalles = detalleEntradaRepository
+                            .findByEntradaIdEntrada(entrada.getIdEntrada())
+                            .stream()
+                            .map(this::convertirADetalleResponse)
+                            .collect(Collectors.toList());
+                    return construirEntradaResponse(entrada, detalles);
+                })
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public EntradaStockResponse buscarPorId(Integer id) {
+        EntradaStock entrada = entradaStockRepository.findById(id)
+                .orElseThrow(() -> new RecursoNoEncontradoException("No se encontró la entrada de stock con ID: " + id));
+
+        List<DetalleEntradaResponse> detalles = detalleEntradaRepository
+                .findByEntradaIdEntrada(entrada.getIdEntrada())
+                .stream()
+                .map(this::convertirADetalleResponse)
+                .collect(Collectors.toList());
+
+        return construirEntradaResponse(entrada, detalles);
+    }
+
+    private DetalleEntradaResponse convertirADetalleResponse(DetalleEntrada d) {
+        return new DetalleEntradaResponse(
+                d.getIdDetalle(),
+                d.getProducto().getIdProducto(),
+                d.getProducto().getCodigoSku(),
+                d.getProducto().getNombre(),
+                d.getCantidad()
+        );
+    }
+
+    private EntradaStockResponse construirEntradaResponse(EntradaStock entrada, List<DetalleEntradaResponse> detalles) {
+        return new EntradaStockResponse(
+                entrada.getIdEntrada(),
+                entrada.getProveedor().getIdProveedor(),
+                entrada.getProveedor().getRazonSocial(),
+                entrada.getUsuario().getIdUsuario(),
+                entrada.getUsuario().getNombre(),
+                entrada.getTipoDocumento(),
+                entrada.getDocumento(),
+                entrada.getFecha(),
+                entrada.getEstado(),
+                entrada.getFechaCreacion(),
+                detalles
+        );
+    }
+}

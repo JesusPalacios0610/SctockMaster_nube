@@ -1,0 +1,86 @@
+package com.proyecto.electromarket.controller;
+
+import com.proyecto.electromarket.dto.EstadoRequest;
+import com.proyecto.electromarket.dto.ProductoRequest;
+import com.proyecto.electromarket.dto.ProductoResponse;
+import com.proyecto.electromarket.service.ProductoService;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/productos")
+public class ProductoController {
+
+    private final ProductoService productoService;
+
+    public ProductoController(ProductoService productoService) {
+        this.productoService = productoService;
+    }
+
+    // GET /api/productos - Listar todos los productos
+    @GetMapping
+    public ResponseEntity<List<ProductoResponse>> listarTodos() {
+        return ResponseEntity.ok(productoService.listarTodos());
+    }
+
+    // GET /api/productos/{id} - Obtener un producto por su ID
+    @GetMapping("/{id}")
+    public ResponseEntity<ProductoResponse> buscarPorId(@PathVariable Integer id) {
+        return ResponseEntity.ok(productoService.buscarPorId(id));
+    }
+
+    // GET /api/productos/buscar?termino=laptop - Búsqueda por nombre o SKU
+    @GetMapping("/buscar")
+    public ResponseEntity<List<ProductoResponse>> buscar(@RequestParam(required = false) String termino) {
+        return ResponseEntity.ok(productoService.buscar(termino));
+    }
+
+    // GET /api/productos/alertas - Listar productos ACTIVOS con stock crítico (bajo stock mínimo)
+    @GetMapping("/alertas")
+    public ResponseEntity<List<ProductoResponse>> listarBajoStock() {
+        return ResponseEntity.ok(productoService.listarBajoStock());
+    }
+
+    // POST /api/productos - Crear un nuevo producto
+    @PostMapping
+    public ResponseEntity<ProductoResponse> crear(
+            @Valid @RequestBody ProductoRequest request,
+            @AuthenticationPrincipal Jwt authenticatedUser) {
+        request.setIdUsuario(authenticatedUser.<Number>getClaim("uid").intValue());
+        ProductoResponse creado = productoService.crear(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(creado);
+    }
+
+    // PUT /api/productos/{id} - Actualizar un producto existente (no modifica estado activo)
+    @PutMapping("/{id}")
+    public ResponseEntity<ProductoResponse> actualizar(
+            @PathVariable Integer id,
+            @Valid @RequestBody ProductoRequest request,
+            @AuthenticationPrincipal Jwt authenticatedUser) {
+        request.setIdUsuario(authenticatedUser.<Number>getClaim("uid").intValue());
+        return ResponseEntity.ok(productoService.actualizar(id, request));
+    }
+
+    // PATCH /api/productos/{id}/estado - Cambiar estado activo/inactivo
+    @PatchMapping("/{id}/estado")
+    public ResponseEntity<ProductoResponse> cambiarEstado(
+            @PathVariable Integer id,
+            @Valid @RequestBody EstadoRequest request,
+            @AuthenticationPrincipal Jwt authenticatedUser) {
+        request.setIdUsuario(authenticatedUser.<Number>getClaim("uid").intValue());
+        return ResponseEntity.ok(productoService.cambiarEstado(id, request));
+    }
+}

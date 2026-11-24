@@ -1,0 +1,9 @@
+databases:
+  - name: electromarket-db
+    databaseName: electromarket
+    user: electromarket
+    plan: 0.1c-256mb
+    postgresMajorVersion: "17"
+    region: ohio
+    diskSizeGB: 1
+    ipAllowList: []
