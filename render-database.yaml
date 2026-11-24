@@ -5,5 +5,4 @@ databases:
     plan: free
     postgresMajorVersion: "17"
     region: ohio
-    diskSizeGB: 1
     ipAllowList: []
